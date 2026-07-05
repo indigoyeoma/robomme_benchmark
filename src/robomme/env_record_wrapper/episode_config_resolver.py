@@ -13,6 +13,8 @@ from ..logging_utils import logger
 DATASET_ROOT = Path(__file__).resolve().parents[1] / "env_metadata"
 
 _ALLOWED_DATASETS = {"train", "test", "val"}
+# Tasks that accept a `retain_steps` kwarg (controllable cue->query retention interval).
+_RETENTION_TASKS = {"VideoUnmask"}
 _ALLOWED_ACTION_SPACES = {"joint_angle", "ee_pose", "waypoint", "multi_choice"}
 _DEFAULT_TASK_LIST = [
     "PickXtimes",
@@ -181,6 +183,7 @@ class BenchmarkEnvBuilder:
         include_available_multi_choices: bool = False,
         include_front_camera_intrinsic: bool = False,
         include_wrist_camera_intrinsic: bool = False,
+        retain_steps: Optional[int] = None,
     ):
         """Create and configure environment for specific episode. Wrap EndeffectorDemonstrationWrapper for action_space=ee_pose, MultiStepDemonstrationWrapper for waypoint, OraclePlannerDemonstrationWrapper for multi_choice."""
         from .DemonstrationWrapper import DemonstrationWrapper
@@ -190,6 +193,18 @@ class BenchmarkEnvBuilder:
         )
 
         seed, difficulty_hint = self.resolve_episode(episode_idx)
+        # Retention-interval passthrough (additive): prefer explicit arg, else builder
+        # default, else a per-episode metadata field. Absent in all -> stock behavior.
+        retain_hint = retain_steps
+        if retain_hint is None:
+            retain_hint = getattr(self, "retain_steps", None)
+        if retain_hint is None:
+            metadata = get_episode_metadata(self.metadata_index, self.env_id, episode_idx)
+            if metadata is not None and metadata.get("retain_steps") is not None:
+                try:
+                    retain_hint = int(metadata.get("retain_steps"))
+                except (TypeError, ValueError):
+                    retain_hint = None
         env_kwargs = dict(
             obs_mode="rgb+depth+segmentation",
             control_mode="pd_joint_pos",
@@ -200,9 +215,14 @@ class BenchmarkEnvBuilder:
             env_kwargs["seed"] = seed
         if difficulty_hint:
             env_kwargs["difficulty"] = difficulty_hint
+        # Only tasks that explicitly consume retain_steps may receive it; other envs would
+        # reject an unexpected kwarg. Keep this list in sync with tasks that pop it.
+        if retain_hint is not None and self.env_id in _RETENTION_TASKS:
+            env_kwargs["retain_steps"] = int(retain_hint)
         seed_desc = seed if seed is not None else "default"
         difficulty_str = f", difficulty={difficulty_hint}" if difficulty_hint else ""
-        logger.debug(f"[{self.env_id}] Episode {episode_idx}: seed={seed_desc}{difficulty_str}")
+        retain_str = f", retain_steps={retain_hint}" if retain_hint is not None else ""
+        logger.debug(f"[{self.env_id}] Episode {episode_idx}: seed={seed_desc}{difficulty_str}{retain_str}")
 
         env = gym.make(self.env_id, **env_kwargs)
         force_front_camera_params = self.action_space == "multi_choice"

@@ -210,3 +210,5 @@ __marimo__/
 .agent/
 .cursor/
 .agents/
+/data/
+/challenge_results/

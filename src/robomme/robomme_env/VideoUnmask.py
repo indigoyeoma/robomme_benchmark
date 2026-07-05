@@ -119,6 +119,12 @@ class VideoUnmask(BaseEnv):
                 self.robomme_failure_recovery_mode.lower()
             )
 
+        # Retention-interval knob: extra no-op (static-hold) steps inserted between the
+        # early occlusion CUE (lift-and-drop reveal, steps 0..64) and the moment the late
+        # QUERY (pick the container hiding color_names[0]) becomes answerable. Default 0
+        # reproduces stock timing bit-for-bit.
+        self.retain_steps = int(kwargs.pop("retain_steps", 0))
+
         normalized_robomme_difficulty = normalize_robomme_difficulty(
             kwargs.pop("difficulty", None)
         )
@@ -235,15 +241,18 @@ class VideoUnmask(BaseEnv):
             # Add newly generated cube to avoidance list
             avoid.append(cube_actor)
 
+        # Cue->query retention interval = stock 64-step static hold + retain_steps extra
+        # no-op hold steps. retain_steps=0 -> identical to stock (static_steps=64).
+        hold_steps = 64 + self.retain_steps
         tasks = [
              {
-                            "func": lambda: static_check(self, timestep=int(self.elapsed_steps), static_steps=64),
+                            "func": lambda: static_check(self, timestep=int(self.elapsed_steps), static_steps=hold_steps),
                             "name": "static",
                             "subgoal_segment": "static",
                             "choice_label": "static",
                             "demonstration": True,
                             "failure_func": None,
-                            "solve": lambda env, planner: solve_hold_obj(env, planner, static_steps=64),
+                            "solve": lambda env, planner: solve_hold_obj(env, planner, static_steps=hold_steps),
                         },
             
 
